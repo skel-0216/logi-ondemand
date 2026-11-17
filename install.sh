@@ -1,11 +1,12 @@
 #!/bin/bash
 # Installs `logi` and the background watcher (per-user, no sudo).
 #
-#   ./install.sh            event mode: start on connect, stop 10 min after disconnect
-#   ./install.sh --light    light mode: start on connect, stop on sleep/wake if no device;
-#                           nothing ever stays running
-#   ./install.sh --polling  fallback: check every $INTERVAL seconds with a shell script
-# Event and light modes need swiftc (Xcode Command Line Tools).
+#   ./install.sh             light mode (default): start on connect, stop on sleep/wake
+#                            if no device; nothing ever stays running
+#   ./install.sh --resident  a small helper stays while a device is connected and stops
+#                            Options+ 10 min after the last disconnect
+#   ./install.sh --polling   fallback: check every $INTERVAL seconds with a shell script
+# Light and resident modes need swiftc (Xcode Command Line Tools).
 set -eu
 
 PREFIX="${PREFIX:-$HOME/.local}"
@@ -13,19 +14,19 @@ INTERVAL="${INTERVAL:-20}"
 LABEL="io.github.logi-ondemand"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
-MODE=event
+MODE=light
 
 case "${1:-}" in
-  --polling) MODE=polling;;
-  --light)   MODE=light;;
-  "")        ;;
-  *) echo "usage: ./install.sh [--light | --polling]" >&2; exit 1;;
+  --polling)  MODE=polling;;
+  --resident) MODE=event;;
+  --light|"") ;;
+  *) echo "usage: ./install.sh [--resident | --polling]" >&2; exit 1;;
 esac
 if [ "$(uname)" != Darwin ]; then echo "macOS only." >&2; exit 1; fi
 
 if [ "$MODE" != polling ] && ! command -v swiftc >/dev/null 2>&1; then
   echo "swiftc not found — falling back to polling mode."
-  echo "(Install Xcode Command Line Tools with 'xcode-select --install' and re-run for event mode.)"
+  echo "(Install Xcode Command Line Tools with 'xcode-select --install' and re-run for light mode.)"
   MODE=polling
 fi
 
@@ -99,7 +100,7 @@ fi
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 if [ "$MODE" = event ]; then
-  echo "watcher loaded (event mode: wakes only when a Logitech device connects)"
+  echo "watcher loaded (resident mode: helper stays while a device is connected)"
 elif [ "$MODE" = light ]; then
   echo "watcher loaded (light mode: runs only on device connect and sleep/wake, then exits)"
 else

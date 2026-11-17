@@ -11,39 +11,40 @@ after it disconnects. While no Logitech device is connected, **nothing runs at a
 
 ## How it works
 
-- `launchd` watches for a Logitech (`VendorID 0x046D`) mouse/keyboard to appear in IOKit
-  (`LaunchEvents` / `com.apple.iokit.matching`). This costs nothing while you wait.
-- When one connects over **USB** (incl. Bolt/Unifying receivers) or **Bluetooth**, `launchd` starts the
-  small `logi-watch` helper, which starts Options+ immediately.
-- While the device stays connected, `logi-watch` sleeps on IOKit callbacks (≈12 MB, 0% CPU).
-- When the last Logitech device has been gone for 10 minutes (configurable), it stops Options+ and exits.
-  The grace period keeps Bluetooth mice that briefly sleep from toggling Options+ on and off.
+Built for the usual laptop pattern: connect the mouse when you need it and use it until you close the lid.
+Nothing of logi-ondemand stays running — not while you wait, and not while the mouse is in use.
+
+- `launchd` runs the small `logi-watch` helper for a fraction of a second only when:
+  - a Logitech (`VendorID 0x046D`) mouse/keyboard appears over **USB** (incl. Bolt/Unifying receivers) or
+    **Bluetooth** (`LaunchEvents` / `com.apple.iokit.matching`),
+  - the Mac goes to sleep or wakes (`com.apple.powermanagement.systempowerstate`),
+  - you log in.
+- Each time, it starts Options+ if a Logitech device is connected, otherwise stops it, and exits.
 - Virtual HID devices and Logitech webcams are ignored.
+
+If you switch the mouse off without sleeping the Mac, Options+ keeps running until the next sleep (or
+`logi off`). `launchd` can launch a job when a device appears but not when one disappears, so catching
+that moment needs a process that stays around — that is what `--resident` mode is for.
 
 No sudo, no changes to Logitech's files.
 
 ## Modes
 
-| | `./install.sh` (event) | `./install.sh --light` | `./install.sh --polling` |
+| | `./install.sh` (default) | `./install.sh --resident` | `./install.sh --polling` |
 |---|---|---|---|
 | Nothing Logitech connected | nothing runs | nothing runs | 10 ms check every 20 s |
 | Device connects | Options+ starts at once | Options+ starts at once | starts within 20 s |
-| While connected | helper waits (≈12 MB, 0% CPU) | **nothing runs** | 10 ms check every 20 s |
-| Options+ stops | 10 min after last disconnect | on next **sleep/wake** with no device | 10 min after last disconnect |
+| While connected | **nothing runs** | helper waits (≈12 MB, 0% CPU) | 10 ms check every 20 s |
+| Options+ stops | on next **sleep/wake** with no device | 10 min after last disconnect | 10 min after last disconnect |
 | Needs | swiftc | swiftc | nothing |
 
-**Light mode** fits the usual laptop pattern: plug in or pair the mouse when you need it and use it until
-you close the lid. `launchd` runs the helper for a fraction of a second on login, on device arrival and on
-every sleep/wake transition (`com.apple.powermanagement.systempowerstate`); it starts Options+ if a
-Logitech device is connected, otherwise stops it, and exits. If you switch the mouse off without sleeping
-the Mac, Options+ keeps running until the next sleep (or `logi off`).
-
-Without the Swift compiler, `./install.sh` falls back to polling mode automatically. Re-run `install.sh`
-with another option to switch modes.
+The 10-minute grace period in the other modes keeps Bluetooth mice that briefly sleep from toggling
+Options+ on and off. Without the Swift compiler, `./install.sh` falls back to polling mode automatically.
+Re-run `install.sh` with another option to switch modes.
 
 ## Install
 
-Event and light modes need Xcode Command Line Tools (`xcode-select --install`).
+The default and `--resident` modes need Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 git clone https://github.com/skel-0216/logi-ondemand.git
@@ -89,7 +90,7 @@ similar extras need it, so they become available a moment after the device conne
 `~/.config/logi-ondemand/config` (shell syntax):
 
 ```bash
-GRACE_MINUTES=10   # minutes to keep Options+ running after the last device disconnects
+GRACE_MINUTES=10   # --resident / --polling: minutes to keep Options+ after the last disconnect
 ```
 
 ## Uninstall

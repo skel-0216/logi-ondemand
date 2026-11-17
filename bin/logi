@@ -120,7 +120,7 @@ cmd_status() {
     if light_mode; then
       say "watcher:   active, light mode (stops on sleep/wake when no device)"
     elif event_mode; then
-      say "watcher:   active, event mode (grace ${GRACE_MINUTES}m)"
+      say "watcher:   active, resident mode (grace ${GRACE_MINUTES}m)"
     else
       say "watcher:   active, polling mode (grace ${GRACE_MINUTES}m)"
     fi
@@ -144,7 +144,7 @@ logi $VERSION — run Logi Options+ only when a Logitech device is connected
 usage: logi <command>
 
   auto      automatic mode (default): start when a Logitech mouse/keyboard
-            connects, stop ${GRACE_MINUTES} min after the last one disconnects
+            connects, stop when it is gone (light mode: at the next sleep/wake)
   on        start Options+ now and keep it running (pauses auto mode)
   off       stop Options+ now and keep it stopped (pauses auto mode)
   status    show mode, connected devices, and whether Options+ is running

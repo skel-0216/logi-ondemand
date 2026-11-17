@@ -9,38 +9,40 @@ CPU와 배터리를 눈에 띄게 소모하는 경우가 있습니다. 로지텍
 
 ## 동작 방식
 
-- `launchd`가 IOKit에 로지텍(`VendorID 0x046D`) 마우스/키보드가 나타나는지 지켜봅니다
-  (`LaunchEvents` / `com.apple.iokit.matching`). 기다리는 동안 비용은 0입니다.
-- **USB**(Bolt/Unifying 수신기 포함)나 **블루투스**로 연결되면 `launchd`가 작은 도우미 `logi-watch`를
-  실행하고, 도우미가 즉시 Options+를 켭니다.
-- 연결되어 있는 동안 `logi-watch`는 IOKit 알림만 기다립니다(약 12MB, CPU 0%).
-- 마지막 로지텍 기기가 끊기고 10분(설정 가능)이 지나면 Options+를 끄고 종료합니다. 블루투스 마우스가
-  잠깐 절전에 들어가도 켜졌다 꺼졌다 하지 않도록 유예 시간을 둡니다.
+일반적인 노트북 사용 패턴에 맞춰 만들었습니다. 필요할 때 마우스를 연결하고, 덮개를 닫을 때까지 씁니다.
+기다리는 동안에도, 마우스를 쓰는 동안에도 logi-ondemand는 **상주하지 않습니다.**
+
+- `launchd`가 다음 순간에만 작은 도우미 `logi-watch`를 1초 미만 실행합니다:
+  - 로지텍(`VendorID 0x046D`) 마우스/키보드가 **USB**(Bolt/Unifying 수신기 포함)나 **블루투스**로 연결될 때
+    (`LaunchEvents` / `com.apple.iokit.matching`)
+  - Mac이 잠자기에 들어가거나 깨어날 때(`com.apple.powermanagement.systempowerstate`)
+  - 로그인할 때
+- 매번 로지텍 기기가 있으면 Options+를 켜고, 없으면 끈 뒤 바로 종료합니다.
 - 가상 HID 장치와 로지텍 웹캠은 무시합니다.
+
+Mac을 재우지 않고 마우스만 끄면 다음 잠자기 때까지(또는 `logi off`) Options+가 유지됩니다. `launchd`는 기기가
+나타날 때는 프로그램을 실행해 주지만 사라질 때는 그렇지 않아서, 그 순간을 잡으려면 상주 프로세스가 필요합니다.
+이를 위한 것이 `--resident` 모드입니다.
 
 sudo가 필요 없고, 로지텍 파일은 건드리지 않습니다.
 
 ## 모드
 
-| | `./install.sh` (이벤트) | `./install.sh --light` | `./install.sh --polling` |
+| | `./install.sh` (기본) | `./install.sh --resident` | `./install.sh --polling` |
 |---|---|---|---|
 | 로지텍 기기 없음 | 실행되는 것 없음 | 실행되는 것 없음 | 20초마다 10ms 확인 |
 | 기기 연결 | 즉시 Options+ 시작 | 즉시 Options+ 시작 | 20초 안에 시작 |
-| 연결 중 | 도우미 대기 (약 12MB, CPU 0%) | **실행되는 것 없음** | 20초마다 10ms 확인 |
-| Options+ 종료 시점 | 마지막 기기 해제 10분 후 | 기기 없이 **잠자기/깨어나기** 할 때 | 마지막 기기 해제 10분 후 |
+| 연결 중 | **실행되는 것 없음** | 도우미 대기 (약 12MB, CPU 0%) | 20초마다 10ms 확인 |
+| Options+ 종료 시점 | 기기 없이 **잠자기/깨어나기** 할 때 | 마지막 기기 해제 10분 후 | 마지막 기기 해제 10분 후 |
 | 필요 조건 | swiftc | swiftc | 없음 |
 
-**라이트 모드**는 일반적인 노트북 사용 패턴에 맞습니다. 필요할 때 마우스를 연결하고, 덮개를 닫을 때까지 씁니다.
-`launchd`가 로그인 시, 기기 연결 시, 그리고 잠자기/깨어나기 때마다(`com.apple.powermanagement.systempowerstate`)
-도우미를 잠깐(1초 미만) 실행합니다. 로지텍 기기가 있으면 Options+를 켜고, 없으면 끈 뒤 바로 종료합니다.
-Mac을 재우지 않고 마우스만 끄면 다음 잠자기 때까지(또는 `logi off`) Options+가 유지됩니다.
-
-Swift 컴파일러가 없으면 `./install.sh`가 자동으로 폴링 모드로 설치합니다. 다른 옵션으로 `install.sh`를 다시
-실행하면 모드가 바뀝니다.
+다른 모드의 10분 유예 시간은 블루투스 마우스가 잠깐 절전에 들어갈 때 Options+가 켜졌다 꺼졌다 하는 것을
+막습니다. Swift 컴파일러가 없으면 `./install.sh`가 자동으로 폴링 모드로 설치합니다. 다른 옵션으로
+`install.sh`를 다시 실행하면 모드가 바뀝니다.
 
 ## 설치
 
-이벤트 모드와 라이트 모드에는 Xcode 명령줄 도구가 필요합니다(`xcode-select --install`).
+기본 모드와 `--resident` 모드에는 Xcode 명령줄 도구가 필요합니다(`xcode-select --install`).
 
 ```bash
 git clone https://github.com/skel-0216/logi-ondemand.git
@@ -86,7 +88,7 @@ logi log      # 최근 연결/해제 및 시작/종료 기록
 `~/.config/logi-ondemand/config` (셸 문법):
 
 ```bash
-GRACE_MINUTES=10   # 마지막 기기가 끊긴 뒤 Options+를 유지할 시간(분)
+GRACE_MINUTES=10   # --resident / --polling: 마지막 기기가 끊긴 뒤 Options+를 유지할 시간(분)
 ```
 
 ## 제거
