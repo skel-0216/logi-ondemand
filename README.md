@@ -22,12 +22,28 @@ after it disconnects. While no Logitech device is connected, **nothing runs at a
 
 No sudo, no changes to Logitech's files.
 
-**Polling fallback:** without the Swift compiler, `./install.sh` falls back to a shell script that checks
-every 20 seconds (~10 ms per check). You can also choose it with `./install.sh --polling`.
+## Modes
+
+| | `./install.sh` (event) | `./install.sh --light` | `./install.sh --polling` |
+|---|---|---|---|
+| Nothing Logitech connected | nothing runs | nothing runs | 10 ms check every 20 s |
+| Device connects | Options+ starts at once | Options+ starts at once | starts within 20 s |
+| While connected | helper waits (≈12 MB, 0% CPU) | **nothing runs** | 10 ms check every 20 s |
+| Options+ stops | 10 min after last disconnect | on next **sleep/wake** with no device | 10 min after last disconnect |
+| Needs | swiftc | swiftc | nothing |
+
+**Light mode** fits the usual laptop pattern: plug in or pair the mouse when you need it and use it until
+you close the lid. `launchd` runs the helper for a fraction of a second on login, on device arrival and on
+every sleep/wake transition (`com.apple.powermanagement.systempowerstate`); it starts Options+ if a
+Logitech device is connected, otherwise stops it, and exits. If you switch the mouse off without sleeping
+the Mac, Options+ keeps running until the next sleep (or `logi off`).
+
+Without the Swift compiler, `./install.sh` falls back to polling mode automatically. Re-run `install.sh`
+with another option to switch modes.
 
 ## Install
 
-Requires Xcode Command Line Tools for event mode (`xcode-select --install`).
+Event and light modes need Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 git clone https://github.com/skel-0216/logi-ondemand.git

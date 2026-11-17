@@ -6,6 +6,9 @@
 // the grace period, stops Options+ and exits. While nothing Logitech is connected,
 // nothing runs at all.
 //
+// With --oneshot (light mode) it never stays running: it is started on login, on
+// device arrival and on sleep/wake, starts or stops Options+, and exits at once.
+//
 // Debug overrides (env): LOGI_VENDOR_ID, LOGI_TRANSPORTS (regex), LOGI_GRACE_SECONDS.
 
 import AppKit
@@ -80,12 +83,12 @@ func stopAgent(_ reason: String) {
     let apps = running(uiBundleID) + running(agentBundleID)
     guard !apps.isEmpty else { return }
     // The agent ignores SIGTERM but exits cleanly on SIGINT.
-    for a in apps { kill(a.processIdentifier, SIGINT) }
+    let pids = apps.map { $0.processIdentifier }
+    for p in pids { kill(p, SIGINT) }
+    let alive = { pids.filter { kill($0, 0) == 0 } }
     let deadline = Date().addingTimeInterval(5)
-    while Date() < deadline, apps.contains(where: { !$0.isTerminated }) {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-    }
-    for a in apps where !a.isTerminated { kill(a.processIdentifier, SIGKILL) }
+    while Date() < deadline, !alive().isEmpty { usleep(200_000) }
+    for p in alive() { kill(p, SIGKILL) }
     log("stopped Options+ (\(reason))")
 }
 
@@ -170,13 +173,54 @@ final class Watcher {
 
 // MARK: main
 
+// Light mode (--oneshot): no process stays around. Run on login, on device arrival
+// and on every sleep/wake transition; start Options+ if a Logitech device is
+// connected, otherwise stop it, then exit.
+func connectedDeviceNames() -> [String] {
+    let m = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+    let match: [String: Any] = [kIOHIDVendorIDKey: vendorID, kIOHIDPrimaryUsagePageKey: 1]
+    IOHIDManagerSetDeviceMatching(m, match as CFDictionary)
+    IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
+    defer { IOHIDManagerClose(m, IOOptionBits(kIOHIDOptionsTypeNone)) }
+    guard let set = IOHIDManagerCopyDevices(m) as? Set<IOHIDDevice> else { return [] }
+    return Set(set.compactMap { d -> String? in
+        let t = IOHIDDeviceGetProperty(d, kIOHIDTransportKey as CFString) as? String ?? ""
+        guard t.range(of: transportPattern, options: .regularExpression) != nil else { return nil }
+        return IOHIDDeviceGetProperty(d, kIOHIDProductKey as CFString) as? String ?? "Logitech device"
+    }).sorted()
+}
+
+var trigger = "login"
+
+func oneshot() -> Never {
+    // Give launchd a moment to hand over the triggering event.
+    RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+    guard mode() == "auto" else { exit(0) }
+    let names = connectedDeviceNames()
+    if !names.isEmpty {
+        if !agentRunning() { log("connected: \(names.joined(separator: ", "))") }
+        startAgent("device connected")
+    } else if agentRunning() {
+        stopAgent("no device at \(trigger)")
+    }
+    exit(0)
+}
+
+// MARK: main
+
 try? FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true)
 
-// launchd delivers the IOKit match as an XPC event. It must be consumed, or launchd
+// launchd delivers its triggers as XPC events. They must be consumed, or launchd
 // keeps relaunching this job for the same event.
 xpc_set_event_stream_handler("com.apple.iokit.matching", DispatchQueue.main) { event in
     _ = xpc_dictionary_get_string(event, XPC_EVENT_KEY_NAME)
+    trigger = "device event"
+}
+xpc_set_event_stream_handler("com.apple.notifyd.matching", DispatchQueue.main) { event in
+    _ = xpc_dictionary_get_string(event, XPC_EVENT_KEY_NAME)
+    trigger = "sleep/wake"
 }
 
 guard mode() == "auto" else { exit(0) }
+if CommandLine.arguments.contains("--oneshot") { oneshot() }
 Watcher().run()

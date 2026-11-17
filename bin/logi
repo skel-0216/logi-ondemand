@@ -50,6 +50,7 @@ agent_running() { pgrep -f "$AGENT_MATCH" >/dev/null 2>&1; }
 WATCH_LABEL="io.github.logi-ondemand"
 plist="$HOME/Library/LaunchAgents/$WATCH_LABEL.plist"
 event_mode() { grep -q LaunchEvents "$plist" 2>/dev/null; }
+light_mode() { grep -q -- --oneshot "$plist" 2>/dev/null; }
 
 # Event mode: let the running watcher (if any) exit, or start it to re-evaluate.
 stop_watcher()  { event_mode && pkill -x logi-watch 2>/dev/null; return 0; }
@@ -116,7 +117,9 @@ cmd_status() {
     say "devices:   none"
   fi
   if launchctl print "gui/$(id -u)/$WATCH_LABEL" >/dev/null 2>&1; then
-    if event_mode; then
+    if light_mode; then
+      say "watcher:   active, light mode (stops on sleep/wake when no device)"
+    elif event_mode; then
       say "watcher:   active, event mode (grace ${GRACE_MINUTES}m)"
     else
       say "watcher:   active, polling mode (grace ${GRACE_MINUTES}m)"

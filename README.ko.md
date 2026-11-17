@@ -20,12 +20,27 @@ CPU와 배터리를 눈에 띄게 소모하는 경우가 있습니다. 로지텍
 
 sudo가 필요 없고, 로지텍 파일은 건드리지 않습니다.
 
-**폴링 대체 모드:** Swift 컴파일러가 없으면 `./install.sh`가 20초마다 확인하는 셸 스크립트 방식(1회 약 10ms)으로
-설치됩니다. `./install.sh --polling`으로 직접 선택할 수도 있습니다.
+## 모드
+
+| | `./install.sh` (이벤트) | `./install.sh --light` | `./install.sh --polling` |
+|---|---|---|---|
+| 로지텍 기기 없음 | 실행되는 것 없음 | 실행되는 것 없음 | 20초마다 10ms 확인 |
+| 기기 연결 | 즉시 Options+ 시작 | 즉시 Options+ 시작 | 20초 안에 시작 |
+| 연결 중 | 도우미 대기 (약 12MB, CPU 0%) | **실행되는 것 없음** | 20초마다 10ms 확인 |
+| Options+ 종료 시점 | 마지막 기기 해제 10분 후 | 기기 없이 **잠자기/깨어나기** 할 때 | 마지막 기기 해제 10분 후 |
+| 필요 조건 | swiftc | swiftc | 없음 |
+
+**라이트 모드**는 일반적인 노트북 사용 패턴에 맞습니다. 필요할 때 마우스를 연결하고, 덮개를 닫을 때까지 씁니다.
+`launchd`가 로그인 시, 기기 연결 시, 그리고 잠자기/깨어나기 때마다(`com.apple.powermanagement.systempowerstate`)
+도우미를 잠깐(1초 미만) 실행합니다. 로지텍 기기가 있으면 Options+를 켜고, 없으면 끈 뒤 바로 종료합니다.
+Mac을 재우지 않고 마우스만 끄면 다음 잠자기 때까지(또는 `logi off`) Options+가 유지됩니다.
+
+Swift 컴파일러가 없으면 `./install.sh`가 자동으로 폴링 모드로 설치합니다. 다른 옵션으로 `install.sh`를 다시
+실행하면 모드가 바뀝니다.
 
 ## 설치
 
-이벤트 모드에는 Xcode 명령줄 도구가 필요합니다(`xcode-select --install`).
+이벤트 모드와 라이트 모드에는 Xcode 명령줄 도구가 필요합니다(`xcode-select --install`).
 
 ```bash
 git clone https://github.com/skel-0216/logi-ondemand.git
