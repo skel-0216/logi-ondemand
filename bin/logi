@@ -1,0 +1,165 @@
+#!/bin/bash
+# logi-ondemand — run Logi Options+ only while a Logitech mouse/keyboard is connected.
+# https://github.com/skel-0216/logi-ondemand
+set -u
+
+VERSION="2.0.0"
+AGENT_APP="/Library/Application Support/Logitech.localized/LogiOptionsPlus/logioptionsplus_agent.app"
+AGENT_MATCH="logioptionsplus_agent.app/Contents/MacOS/logioptionsplus_agent"
+UI_MATCH="logioptionsplus.app/Contents/MacOS/logioptionsplus"
+LOGI_LABEL="com.logi.cp-dev-mgr"
+LOGITECH_VID=1133   # 0x046D
+
+STATE_DIR="$HOME/Library/Application Support/logi-ondemand"
+LOG_FILE="$HOME/Library/Logs/logi-ondemand.log"
+CONFIG_FILE="$HOME/.config/logi-ondemand/config"
+
+# Defaults (override in $CONFIG_FILE)
+GRACE_MINUTES=10        # keep Options+ running this long after the last device disappears
+[ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
+
+mkdir -p "$STATE_DIR"
+
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG_FILE"; }
+say() { printf '%s\n' "$*"; }
+
+get_mode() { cat "$STATE_DIR/mode" 2>/dev/null || echo auto; }
+set_mode() { echo "$1" > "$STATE_DIR/mode"; }
+
+# Names of connected Logitech pointers/keyboards (generic-desktop usage page) on a
+# real transport (USB / Bluetooth). Virtual HID devices report no transport and
+# are ignored. hidutil prints a fixed-width table, so columns are cut by the
+# header's offsets.
+connected_devices() {
+  hidutil list --matching "{\"VendorID\":$LOGITECH_VID,\"PrimaryUsagePage\":1}" 2>/dev/null \
+    | awk '
+        function trim(s) { gsub(/^ +| +$/, "", s); return s }
+        /^VendorID/ { t = index($0, "Transport"); c = index($0, " Class") + 1
+                      p = index($0, " Product ") + 1; u = index($0, "UserClass"); next }
+        /^0x46d / && t && p {
+          tr = trim(substr($0, t, c - t))
+          if (tr ~ /USB|Bluetooth/) print trim(substr($0, p, u - p))
+        }' \
+    | sort -u
+}
+
+device_connected() { [ -n "$(connected_devices)" ]; }
+
+agent_running() { pgrep -f "$AGENT_MATCH" >/dev/null 2>&1; }
+
+WATCH_LABEL="io.github.logi-ondemand"
+plist="$HOME/Library/LaunchAgents/$WATCH_LABEL.plist"
+event_mode() { grep -q LaunchEvents "$plist" 2>/dev/null; }
+
+# Event mode: let the running watcher (if any) exit, or start it to re-evaluate.
+stop_watcher()  { event_mode && pkill -x logi-watch 2>/dev/null; return 0; }
+start_watcher() { launchctl kickstart "gui/$(id -u)/$WATCH_LABEL" >/dev/null 2>&1; }
+
+# True when macOS still auto-starts Options+ itself (Login Items toggle is on).
+launchd_managed() { launchctl print "gui/$(id -u)/$LOGI_LABEL" >/dev/null 2>&1; }
+
+stop_pattern() {
+  local pat="$1" i
+  pgrep -f "$pat" >/dev/null 2>&1 || return 0
+  pkill -INT -f "$pat" 2>/dev/null
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f "$pat" >/dev/null 2>&1 || return 0
+    sleep 0.5
+  done
+  pkill -KILL -f "$pat" 2>/dev/null
+}
+
+start_agent() {
+  agent_running && return 0
+  if [ ! -d "$AGENT_APP" ]; then
+    say "Logi Options+ agent not found at: $AGENT_APP" >&2
+    return 1
+  fi
+  open -g -j "$AGENT_APP"
+  log "started Options+ ($1)"
+}
+
+stop_agent() {
+  agent_running || pgrep -f "$UI_MATCH" >/dev/null 2>&1 || return 0
+  stop_pattern "$UI_MATCH"
+  stop_pattern "$AGENT_MATCH"
+  rm -f "$STATE_DIR/last_seen"
+  log "stopped Options+ ($1)"
+}
+
+cmd_check() {
+  [ "$(get_mode)" = auto ] || return 0
+  local now; now=$(date +%s)
+  if device_connected; then
+    echo "$now" > "$STATE_DIR/last_seen"
+    start_agent "device connected"
+  elif agent_running; then
+    local last; last=$(cat "$STATE_DIR/last_seen" 2>/dev/null || true)
+    if [ -z "$last" ]; then
+      # Started by hand with no device: give it the grace period too.
+      echo "$now" > "$STATE_DIR/last_seen"
+    elif [ $((now - last)) -ge $((GRACE_MINUTES * 60)) ]; then
+      stop_agent "no device for ${GRACE_MINUTES}m"
+    fi
+  fi
+}
+
+cmd_status() {
+  local mode; mode=$(get_mode)
+  say "mode:      $mode"
+  if agent_running; then say "Options+:  running"; else say "Options+:  stopped"; fi
+  local devs; devs=$(connected_devices)
+  if [ -n "$devs" ]; then
+    say "devices:   connected"
+    printf '%s\n' "$devs" | sed 's/^/           - /'
+  else
+    say "devices:   none"
+  fi
+  if launchctl print "gui/$(id -u)/$WATCH_LABEL" >/dev/null 2>&1; then
+    if event_mode; then
+      say "watcher:   active, event mode (grace ${GRACE_MINUTES}m)"
+    else
+      say "watcher:   active, polling mode (grace ${GRACE_MINUTES}m)"
+    fi
+  elif [ -f "$plist" ]; then
+    say "watcher:   installed but not loaded"
+  else
+    say "watcher:   not installed"
+  fi
+  if launchd_managed; then
+    say ""
+    say "warning: macOS still auto-starts Logi Options+ at login."
+    say "  Turn it off: System Settings > General > Login Items & Extensions >"
+    say "  'Allow in the Background' > Logitech (or 'Logi Options+')."
+  fi
+}
+
+usage() {
+  cat <<EOF
+logi $VERSION — run Logi Options+ only when a Logitech device is connected
+
+usage: logi <command>
+
+  auto      automatic mode (default): start when a Logitech mouse/keyboard
+            connects, stop ${GRACE_MINUTES} min after the last one disconnects
+  on        start Options+ now and keep it running (pauses auto mode)
+  off       stop Options+ now and keep it stopped (pauses auto mode)
+  status    show mode, connected devices, and whether Options+ is running
+  log       show recent start/stop events
+  check     run one auto-mode check (used by the background watcher)
+EOF
+}
+
+case "${1:-status}" in
+  on)     set_mode on;   stop_watcher; start_agent "manual on" && say "Options+ started (mode: on — 'logi auto' to resume automatic)";;
+  off)    set_mode off;  stop_watcher; stop_agent "manual off"; say "Options+ stopped (mode: off — 'logi auto' to resume automatic)";;
+  auto)   set_mode auto; rm -f "$STATE_DIR/last_seen"
+          if event_mode; then start_watcher; sleep 2; else cmd_check; fi
+          say "automatic mode"; cmd_status;;
+  check)  cmd_check;;
+  status) cmd_status;;
+  log)    tail -n 20 "$LOG_FILE" 2>/dev/null || say "no events yet";;
+  -v|--version|version) say "$VERSION";;
+  -h|--help|help) usage;;
+  *) usage; exit 1;;
+esac
